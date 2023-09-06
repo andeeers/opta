@@ -30,9 +30,6 @@ unsigned long previous_mqttconn = 0;
 const long serial_interval = 10000;
 unsigned long previous_serial = 0;
 
-
-int count = 0;
-
 bool status[6] = {0, 0, 0, 0, 0, 0};
 bool g_status[6] = {0, 0, 0, 0, 0, 0};
 unsigned long senaste_andring[6] = {0, 0, 0, 0, 0, 0};
@@ -47,7 +44,7 @@ NTPClient timeClient(conMan.getUDP());
 
 void setup() {
   Serial.begin(9600);
-  delay(1000);
+  delay(2000);
 
   Serial.println("Hello world");
 
@@ -109,7 +106,7 @@ void loop() {
     if (ms - previous_check >= check_interval) {
       digitalWrite(LED_D0, HIGH);
       previous_check = ms;
-      mqttClient.poll();
+      //mqttClient.poll();
       checkMessages();
     }
 
@@ -128,8 +125,6 @@ void loop() {
       mqttClient.beginMessage(topic);
       mqttClient.print(output);
       mqttClient.endMessage();
-
-      count++;
     }
   }
   else {
