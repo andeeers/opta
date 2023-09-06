@@ -10,7 +10,7 @@
 #include "trust_anchors.h"
 #include "secrets.h"
 
-const char broker[] = SECRET_MQTTBROKER;
+const char broker[] = SECRET_MQTT_BROKER;
 int        port     = 8883;
 const char topic[]  = "anders/hej";
 const char configtopic[]  = "anders/config";
@@ -47,6 +47,7 @@ NTPClient timeClient(conMan.getUDP());
 
 void setup() {
   Serial.begin(9600);
+  delay(1000);
 
   Serial.println("Hello world");
 
@@ -104,10 +105,11 @@ void loop() {
 
   if (mqttClient.connected()) {
     digitalWrite(LED_USER, HIGH);
-    mqttClient.poll();
+    
     if (ms - previous_check >= check_interval) {
       digitalWrite(LED_D0, HIGH);
       previous_check = ms;
+      mqttClient.poll();
       checkMessages();
     }
 
@@ -274,6 +276,7 @@ void connectMQTT() {
   Serial.println();
 
   mqttClient.subscribe(configtopic);
+
 
   Serial.print("Waiting for messages on topic: ");
   Serial.println(configtopic);
