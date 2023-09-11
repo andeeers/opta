@@ -21,15 +21,13 @@ unsigned long previous_send = 0;
 const long check_interval = 1000;
 unsigned long previous_check = 0;
 
-const long wifi_interval = 60000;
+const long wifi_interval = 10000;
 unsigned long previous_wifi = 0;
 
 const long mqttconn_interval = 30000;
 unsigned long previous_mqttconn = 0;
 
-const long serial_interval = 10000;
-unsigned long previous_serial = 0;
-
+bool firstcheck = true;
 bool status[6] = {0, 0, 0, 0, 0, 0};
 bool g_status[6] = {0, 0, 0, 0, 0, 0};
 unsigned long senaste_andring[6] = {0, 0, 0, 0, 0, 0};
@@ -71,6 +69,17 @@ void setup() {
 
   mqttClient.setUsernamePassword(SECRET_MQTT_USER, SECRET_MQTT_PASS);
 
+  do {
+    conMan.check();
+    timeClient.update();
+  } while (conMan.getStatus() != NetworkConnectionState::CONNECTED && timeClient.isTimeSet() != true);
+
+  unsigned long t = timeClient.getEpochTime();
+  for (int x = 0; x < 6; x++) {
+    senaste_andring[x] = t;
+  }
+  
+  
 }
 
 
@@ -88,13 +97,6 @@ void loop() {
   if (ms - previous_wifi >= wifi_interval) {
     conMan.check();
     previous_wifi = ms;
-  }
-  
-  if (ms - previous_serial >= serial_interval) {
-    if (!Serial) {
-      Serial.begin(9600);
-    }
-    previous_serial = ms;
   }
 
   timeClient.update();
@@ -155,17 +157,19 @@ void updateInputs() {
   statustid = timeClient.getEpochTime();
 
   for (int x = 0; x < 6; x++) {
-    if (g_status[x] != status[x]) {
-      if (senaste_andring[x] > 0) {
-        g_statustid[x] = statustid - senaste_andring[x];
-      }
-
+    if (g_status[x] != status[x] || firstcheck == true) {
+      g_statustid[x] = statustid - senaste_andring[x];
+      Serial.print("firstcheck ");
+      Serial.print(x);
+      Serial.print(":");
+      Serial.println(firstcheck);
       senaste_andring[x] = statustid;
       nyinfo = 1;
     }
   }
 
- 
+  firstcheck = false;
+
 }
 
 String createStatusMessage(int type) {
@@ -238,6 +242,7 @@ void checkMessages() {
 void onNetworkConnect() {
   digitalWrite(LED_RESET, HIGH);
   Serial.println(">>>> CONNECTED to network");
+  timeClient.forceUpdate();
   connectMQTT();
 }
 
