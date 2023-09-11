@@ -34,7 +34,8 @@ bool status[6] = {0, 0, 0, 0, 0, 0};
 bool g_status[6] = {0, 0, 0, 0, 0, 0};
 unsigned long senaste_andring[6] = {0, 0, 0, 0, 0, 0};
 unsigned long g_statustid[6] = {0, 0, 0, 0, 0, 0};
-bool nyinfo = 0;
+unsigned long statustid = 0;
+int nyinfo = 0;
 
 WiFiConnectionHandler conMan(SECRET_SSID, SECRET_WEPKEY);
 
@@ -114,7 +115,7 @@ void loop() {
       digitalWrite(LED_D1, HIGH);
       previous_send = ms;
 
-      String output = createStatusMessage();
+      String output = createStatusMessage(nyinfo);
       Serial.print(timeClient.getFormattedTime());
       Serial.print(" ");
       Serial.print("Sending message to topic: ");
@@ -151,15 +152,15 @@ void updateInputs() {
   status[4] = digitalRead(PIN_A4);
   status[5] = digitalRead(PIN_A5);
   
-  unsigned long tid = timeClient.getEpochTime();
+  statustid = timeClient.getEpochTime();
 
   for (int x = 0; x < 6; x++) {
     if (g_status[x] != status[x]) {
       if (senaste_andring[x] > 0) {
-        g_statustid[x] = tid - senaste_andring[x];
+        g_statustid[x] = statustid - senaste_andring[x];
       }
 
-      senaste_andring[x] = tid;
+      senaste_andring[x] = statustid;
       nyinfo = 1;
     }
   }
@@ -167,46 +168,47 @@ void updateInputs() {
  
 }
 
-String createStatusMessage() {
-  const int capacity (JSON_ARRAY_SIZE(6) + (6 * JSON_OBJECT_SIZE(3)));
+String createStatusMessage(int type) {
+  const int capacity (JSON_OBJECT_SIZE(3) + (7 * JSON_OBJECT_SIZE(3)));
   StaticJsonDocument<capacity> doc;
   String output;
+  
+  JsonObject obj = doc.createNestedObject("h");
 
-  JsonObject obj1 =  doc.createNestedObject();
-  obj1["k"] = "tv"; // Tryckvakt
+  obj["time"] = statustid;
+  obj["type"] = type;
+
+  JsonObject data = doc.createNestedObject("d");
+
+  JsonObject obj1 =  data.createNestedObject("0");
   obj1["s"] = status[0];
   obj1["c"] = senaste_andring[0];
   obj1["t"] = g_statustid[0];
-
-  JsonObject obj2 = doc.createNestedObject();
-  obj2["k"] = "mp"; // Matarpump
+  
+  JsonObject obj2 = data.createNestedObject("1");
   obj2["s"] = status[1];
   obj2["c"] = senaste_andring[1];
   obj2["t"] = g_statustid[1];
 
-  JsonObject obj3 = doc.createNestedObject();
-  obj3["k"] = "ts"; // Tanksensor
+  JsonObject obj3 = data.createNestedObject("2");
   obj3["s"] = status[2];
   obj3["c"] = senaste_andring[2];
   obj3["t"] = g_statustid[2];
 
-  JsonObject obj4 = doc.createNestedObject();
-  obj4["k"] = "hp"; // högtryckspump
+  JsonObject obj4 = data.createNestedObject("3");
   obj4["s"] = status[3];
   obj4["c"] = senaste_andring[3];
   obj4["t"] = g_statustid[3];
   
-  JsonObject obj5 = doc.createNestedObject();
-  obj5["k"] = "bs"; // högtryckspump
+  JsonObject obj5 = data.createNestedObject("4");
   obj5["s"] = status[4];
   obj5["c"] = senaste_andring[4];
   obj5["t"] = g_statustid[4];
 
-  JsonObject obj6 = doc.createNestedObject();
-  obj5["k"] = "al"; // alarm
-  obj5["s"] = status[5];
-  obj5["c"] = senaste_andring[5];
-  obj5["t"] = g_statustid[5];
+  JsonObject obj6 = data.createNestedObject("5");
+  obj6["s"] = status[5];
+  obj6["c"] = senaste_andring[5];
+  obj6["t"] = g_statustid[5];
 
   serializeJson(doc, output);
 
