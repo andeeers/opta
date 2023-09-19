@@ -24,10 +24,10 @@ unsigned long previous_check = 0;
 const long wifi_interval = 10000;
 unsigned long previous_wifi = 0;
 
-const long mqttconn_interval = 30000;
+const long mqttconn_interval = 10000;
 unsigned long previous_mqttconn = 0;
 
-bool firstcheck = true;
+bool firstchecks = true;
 bool status[6] = {0, 0, 0, 0, 0, 0};
 bool g_status[6] = {0, 0, 0, 0, 0, 0};
 unsigned long senaste_andring[6] = {0, 0, 0, 0, 0, 0};
@@ -68,6 +68,7 @@ void setup() {
   timeClient.begin();
 
   mqttClient.setUsernamePassword(SECRET_MQTT_USER, SECRET_MQTT_PASS);
+  
 
   do {
     conMan.check();
@@ -129,13 +130,22 @@ void loop() {
       mqttClient.print(output);
       mqttClient.endMessage();
     }
+    
+    firstchecks = false;
   }
   else {
     digitalWrite(LED_USER, LOW);
     if (ms - previous_mqttconn >= mqttconn_interval) {
-    connectMQTT();
-    previous_mqttconn = ms;
-  }
+      digitalWrite(LED_USER, HIGH);
+      delay(300);
+      digitalWrite(LED_USER, LOW);
+      delay(300);
+      digitalWrite(LED_USER, HIGH);
+      delay(300);
+      digitalWrite(LED_USER, LOW);
+      connectMQTT();
+      previous_mqttconn = ms;
+    }
   }
   
   delay(50);
@@ -157,23 +167,17 @@ void updateInputs() {
   statustid = timeClient.getEpochTime();
 
   for (int x = 0; x < 6; x++) {
-    if (g_status[x] != status[x] || firstcheck == true) {
+    if (g_status[x] != status[x] || firstchecks == true) {
       g_statustid[x] = statustid - senaste_andring[x];
-      Serial.print("firstcheck ");
-      Serial.print(x);
-      Serial.print(":");
-      Serial.println(firstcheck);
       senaste_andring[x] = statustid;
       nyinfo = 1;
     }
   }
 
-  firstcheck = false;
-
 }
 
 String createStatusMessage(int type) {
-  const int capacity (JSON_OBJECT_SIZE(3) + (7 * JSON_OBJECT_SIZE(3)));
+  const int capacity (JSON_OBJECT_SIZE(4) + (7 * JSON_OBJECT_SIZE(4)));
   StaticJsonDocument<capacity> doc;
   String output;
   
@@ -203,7 +207,7 @@ String createStatusMessage(int type) {
   obj4["s"] = status[3];
   obj4["c"] = senaste_andring[3];
   obj4["t"] = g_statustid[3];
-  
+  /*
   JsonObject obj5 = data.createNestedObject("4");
   obj5["s"] = status[4];
   obj5["c"] = senaste_andring[4];
@@ -213,7 +217,7 @@ String createStatusMessage(int type) {
   obj6["s"] = status[5];
   obj6["c"] = senaste_andring[5];
   obj6["t"] = g_statustid[5];
-
+*/
   serializeJson(doc, output);
 
   return output;
@@ -265,6 +269,22 @@ void connectMQTT() {
   Serial.println(broker);
 
   if (!mqttClient.connect(broker, port)) {
+      digitalWrite(LED_USER, HIGH);
+      delay(100);
+      digitalWrite(LED_USER, LOW);
+      delay(100);
+      digitalWrite(LED_USER, HIGH);
+      delay(100);
+      digitalWrite(LED_USER, LOW);
+      delay(100);
+      digitalWrite(LED_USER, HIGH);
+      delay(100);
+      digitalWrite(LED_USER, LOW);
+      delay(100);
+      digitalWrite(LED_USER, HIGH);
+      delay(100);
+      digitalWrite(LED_USER, LOW);
+
     Serial.print("MQTT connection failed! Error code = ");
     Serial.println(mqttClient.connectError());
     return;
