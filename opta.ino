@@ -39,6 +39,7 @@ WiFiConnectionHandler conMan(SECRET_SSID, SECRET_WEPKEY);
 
 SSLClient wifiSSLClient(conMan.getClient(), TAs, (size_t)TAs_NUM, A5);
 
+
 MQTTClient mqttClient;
 
 NTPClient timeClient(conMan.getUDP());
@@ -56,6 +57,8 @@ void setup() {
   pinMode(LED_USER, OUTPUT); // mqtt
   pinMode(LED_RESET, OUTPUT); // wifi
 
+  //wifiSSLClient.setTimeout(5);
+
   mqttClient.begin(broker, port, wifiSSLClient);
   
   conMan.addCallback(NetworkConnectionEvent::CONNECTED, onNetworkConnect);
@@ -63,9 +66,7 @@ void setup() {
   conMan.addCallback(NetworkConnectionEvent::ERROR, onNetworkError);
 
   timeClient.begin();
-  
-  //mqttClient.setUsernamePassword(SECRET_MQTT_USER, SECRET_MQTT_PASS);
-  
+    
   do {
     conMan.check();
     timeClient.update();
@@ -78,7 +79,8 @@ void setup() {
 
 
 void loop() {
-  digitalWrite(LED_D2, HIGH);
+  digitalWrite(LED_D0, HIGH);
+
   delay(10);
   digitalWrite(LED_D0, LOW);
   digitalWrite(LED_D1, LOW);
@@ -87,23 +89,43 @@ void loop() {
 
   unsigned long ms = millis();
 
-
   if (ms - previous_wifi >= wifi_interval) {
+    Serial.print(timeClient.getFormattedTime());
+    Serial.print(" ");
+    Serial.println(">>> Loop: Checking conMan"); 
     conMan.check();
     previous_wifi = ms;
   }
 
   if (conMan.getStatus() != NetworkConnectionState::CONNECTED) {
     digitalWrite(LED_RESET, LOW);
+    Serial.print(timeClient.getFormattedTime());
+    Serial.print(" ");
+    Serial.println(">>> Loop: Network not connected"); 
     return;
   }
   else {
     digitalWrite(LED_RESET, HIGH); //Network OK
   }
 
+  timeClient.update();
+
   if (!mqttClient.connected()) {
+    Serial.print(timeClient.getFormattedTime());
+    Serial.print(" ");
+    Serial.println(">>> Loop: MQTT not connected"); 
     digitalWrite(LED_USER, LOW);
     digitalWrite(LED_D0, HIGH);
+    Serial.print(timeClient.getFormattedTime());
+    Serial.print(" ");
+    Serial.println(">>> Loop: Stopping SSL"); 
+    //wifiSSLClient.removeSession();
+    wifiSSLClient.stop();
+    digitalWrite(LED_D1, HIGH);
+    Serial.print(timeClient.getFormattedTime());
+    Serial.print(" ");
+    Serial.println(">>> Loop: Trying to connect MQTT");
+    //mqttClient.begin(broker, port, wifiSSLClient);
     connectMQTT();
     digitalWrite(LED_D3, HIGH);
     return;
@@ -112,40 +134,27 @@ void loop() {
     digitalWrite(LED_USER, HIGH); //MQTT OK
   }
 
-  timeClient.update();
   mqttClient.loop();
 
-  if (mqttClient.connected()) {
-
-    updateInputs();
-
-    digitalWrite(LED_USER, HIGH);
+  updateInputs();
     
-    if (ms - previous_check >= check_interval) {
-      previous_check = ms;
-      //mqttClient.poll();
-      //checkMessages();
-    }
+  if ((ms - previous_send >= send_interval )) { //heartbeat
+    digitalWrite(LED_D1, HIGH);
+    previous_send = ms;
 
-    if ((ms - previous_send >= send_interval )) {
-      digitalWrite(LED_D1, HIGH);
-      previous_send = ms;
+    String output = createHeartbeatMessage();
+    Serial.print(timeClient.getFormattedTime());
+    Serial.print(" ");
+    Serial.print("Sending message: ");
+    Serial.println(output);
 
-      String output = createHeartbeatMessage();
-      Serial.print(timeClient.getFormattedTime());
-      Serial.print(" ");
-      Serial.print("Sending message: ");
-      Serial.println(output);
+    digitalWrite(LED_D1, HIGH);
+    mqttClient.publish(topic, output);
+    digitalWrite(LED_D1, LOW);
 
-      mqttClient.publish(topic, output);
-    }
   }
-  else {
-    Serial.println("MQTT not connected!");
-    flashError(1000, 3, LED_USER);
-  }
-  
-  delay(50);
+
+  delay(100);
 }
 
 void flashError(int t, int loops, int led) {
@@ -155,6 +164,7 @@ void flashError(int t, int loops, int led) {
     digitalWrite(led, LOW);
     delay(t);
   }
+  delay(3000);
   return;
 }
 
@@ -294,16 +304,18 @@ void onNetworkError() {
 }
 
 bool connectMQTT() {
+  Serial.print(timeClient.getFormattedTime());
+  Serial.print(" ");
 
   Serial.print("Attempting to connect to the MQTT broker: ");
   Serial.println(broker);
-
-  digitalWrite(LED_D1, HIGH);
-  mqttClient.disconnect();
+  
   digitalWrite(LED_D2, HIGH);
 
   if (!mqttClient.connect(clientname, SECRET_MQTT_USER, SECRET_MQTT_PASS)) {
     digitalWrite(LED_D3, HIGH);
+    Serial.print(timeClient.getFormattedTime());
+    Serial.print(" ");
     Serial.println("MQTT not connected!");
     flashError(1000, 6, LED_USER);
     delay(5000);
@@ -311,6 +323,8 @@ bool connectMQTT() {
   }
 
   digitalWrite(LED_USER, HIGH) ;
+  Serial.print(timeClient.getFormattedTime());
+  Serial.print(" ");
   Serial.println("We are connected to the MQTT broker!");
   Serial.println();
 
