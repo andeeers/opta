@@ -90,18 +90,14 @@ void loop() {
   unsigned long ms = millis();
 
   if (ms - previous_wifi >= wifi_interval) {
-    Serial.print(timeClient.getFormattedTime());
-    Serial.print(" ");
-    Serial.println(">>> Loop: Checking conMan"); 
+    logMsg(">>> Loop: Checking conMan"); 
     conMan.check();
     previous_wifi = ms;
   }
 
   if (conMan.getStatus() != NetworkConnectionState::CONNECTED) {
     digitalWrite(LED_RESET, LOW);
-    Serial.print(timeClient.getFormattedTime());
-    Serial.print(" ");
-    Serial.println(">>> Loop: Network not connected"); 
+    logMsg(">>> Loop: Network not connected"); 
     return;
   }
   else {
@@ -111,21 +107,22 @@ void loop() {
   timeClient.update();
 
   if (!mqttClient.connected()) {
-    Serial.print(timeClient.getFormattedTime());
-    Serial.print(" ");
-    Serial.println(">>> Loop: MQTT not connected"); 
+    logMsg(">>> Loop: MQTT not connected"); 
+
     digitalWrite(LED_USER, LOW);
     digitalWrite(LED_D0, HIGH);
-    Serial.print(timeClient.getFormattedTime());
-    Serial.print(" ");
-    Serial.println(">>> Loop: Stopping SSL"); 
-    //wifiSSLClient.removeSession();
-    wifiSSLClient.stop();
-    digitalWrite(LED_D1, HIGH);
-    Serial.print(timeClient.getFormattedTime());
-    Serial.print(" ");
-    Serial.println(">>> Loop: Trying to connect MQTT");
+
+    logMsg(">>> Loop: Removing SSL session"); 
+    //wifiSSLClient.removeSession(nullptr);
+
+    //SSLClient wifiSSLClient(conMan.getClient(), TAs, (size_t)TAs_NUM, A5);
     //mqttClient.begin(broker, port, wifiSSLClient);
+
+    digitalWrite(LED_D1, HIGH);
+
+    logMsg(">>> Loop: Trying to connect MQTT");
+    //mqttClient.begin(broker, port, wifiSSLClient);
+    //
     connectMQTT();
     digitalWrite(LED_D3, HIGH);
     return;
@@ -143,10 +140,7 @@ void loop() {
     previous_send = ms;
 
     String output = createHeartbeatMessage();
-    Serial.print(timeClient.getFormattedTime());
-    Serial.print(" ");
-    Serial.print("Sending message: ");
-    Serial.println(output);
+    logMsg("Sending message: " + output);
 
     digitalWrite(LED_D1, HIGH);
     mqttClient.publish(topic, output);
@@ -155,6 +149,12 @@ void loop() {
   }
 
   delay(100);
+}
+
+void logMsg(String msg) {
+    Serial.print(timeClient.getFormattedTime());
+    Serial.print(" ");
+    Serial.println(msg);
 }
 
 void flashError(int t, int loops, int led) {
@@ -220,12 +220,7 @@ void updateInputs() {
 
 void sendMessage(String msg) {
   digitalWrite(LED_D0, HIGH);
-  Serial.print(timeClient.getFormattedTime());
-  Serial.print(" ");
-  Serial.print("Sending message to topic: ");
-  Serial.print(topic);
-  Serial.print(":");
-  Serial.println(msg);
+  logMsg("Sending message: " + msg);
 
   mqttClient.publish(topic, msg);
   digitalWrite(LED_D0, LOW);
@@ -287,51 +282,39 @@ void checkMessages() {
 
 void onNetworkConnect() {
   digitalWrite(LED_RESET, HIGH);
-  Serial.println(">>>> CONNECTED to network");
+  logMsg(">>>> CONNECTED to network");
   flashError(200, 3, LED_RESET);
   timeClient.forceUpdate();  
 }
 
 void onNetworkDisconnect() {
   digitalWrite(LED_RESET, LOW);
-  Serial.println(">>>> DISCONNECTED from network");
+  logMsg(">>>> DISCONNECTED from network");
 }
 
 void onNetworkError() {
   digitalWrite(LED_RESET, LOW);
-  Serial.println(">>>> ERROR");
+  logMsg(">>>> ERROR");
   flashError(500, 8, LED_RESET);
 }
 
 bool connectMQTT() {
-  Serial.print(timeClient.getFormattedTime());
-  Serial.print(" ");
-
-  Serial.print("Attempting to connect to the MQTT broker: ");
-  Serial.println(broker);
+  logMsg("Attempting to connect to the MQTT broker");
   
   digitalWrite(LED_D2, HIGH);
 
   if (!mqttClient.connect(clientname, SECRET_MQTT_USER, SECRET_MQTT_PASS)) {
     digitalWrite(LED_D3, HIGH);
-    Serial.print(timeClient.getFormattedTime());
-    Serial.print(" ");
-    Serial.println("MQTT not connected!");
+    logMsg("MQTT not connected!");
     flashError(1000, 6, LED_USER);
     delay(5000);
     return false;
   }
 
   digitalWrite(LED_USER, HIGH) ;
-  Serial.print(timeClient.getFormattedTime());
-  Serial.print(" ");
-  Serial.println("We are connected to the MQTT broker!");
-  Serial.println();
+  logMsg("We are connected to the MQTT broker!");
 
   flashError(200, 3, LED_USER);
-/*
-  Subscript to toptic here
-*/
 
   return true;
 }
