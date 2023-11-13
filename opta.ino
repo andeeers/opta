@@ -4,13 +4,15 @@
 #include <NTPClient.h>
 #include <WiFiUdp.h>
 #include <SSLClient.h>
-#include <ArduinoMqttClient.h>
+//#include <ArduinoMqttClient.h>
+#include <MQTT.h>
 #include <Arduino_ConnectionHandler.h>
 #include <ArduinoJson.h>
 #include "trust_anchors.h"
 #include "secrets.h"
 
 const char broker[] = SECRET_MQTT_BROKER;
+const char clientname[] = "anders1";
 int        port     = 8883;
 const char topic[]  = "anders/hej";
 const char configtopic[]  = "anders/config";
@@ -27,18 +29,19 @@ unsigned long previous_wifi = 0;
 const long mqttconn_interval = 10000;
 unsigned long previous_mqttconn = 0;
 
-bool firstchecks = true;
 bool status[6] = {0, 0, 0, 0, 0, 0};
 bool g_status[6] = {0, 0, 0, 0, 0, 0};
 unsigned long senaste_andring[6] = {0, 0, 0, 0, 0, 0};
 unsigned long g_statustid[6] = {0, 0, 0, 0, 0, 0};
 unsigned long statustid = 0;
-int nyinfo = 0;
 
 WiFiConnectionHandler conMan(SECRET_SSID, SECRET_WEPKEY);
 
 SSLClient wifiSSLClient(conMan.getClient(), TAs, (size_t)TAs_NUM, A5);
-MqttClient mqttClient(wifiSSLClient);
+
+
+MQTTClient mqttClient;
+
 NTPClient timeClient(conMan.getUDP());
 
 void setup() {
@@ -54,10 +57,118 @@ void setup() {
   pinMode(LED_USER, OUTPUT); // mqtt
   pinMode(LED_RESET, OUTPUT); // wifi
 
+  //wifiSSLClient.setTimeout(5);
+
+  mqttClient.begin(broker, port, wifiSSLClient);
+  
   conMan.addCallback(NetworkConnectionEvent::CONNECTED, onNetworkConnect);
   conMan.addCallback(NetworkConnectionEvent::DISCONNECTED, onNetworkDisconnect);
   conMan.addCallback(NetworkConnectionEvent::ERROR, onNetworkError);
 
+  timeClient.begin();
+    
+  do {
+    conMan.check();
+    timeClient.update();
+  } while (conMan.getStatus() != NetworkConnectionState::CONNECTED && timeClient.isTimeSet() != true);
+
+  initInputs();
+  
+}
+
+
+
+void loop() {
+  digitalWrite(LED_D0, HIGH);
+
+  delay(10);
+  digitalWrite(LED_D0, LOW);
+  digitalWrite(LED_D1, LOW);
+  digitalWrite(LED_D2, LOW);
+  digitalWrite(LED_D3, LOW);
+
+  unsigned long ms = millis();
+
+  if (ms - previous_wifi >= wifi_interval) {
+    logMsg(">>> Loop: Checking conMan"); 
+    conMan.check();
+    previous_wifi = ms;
+  }
+
+  if (conMan.getStatus() != NetworkConnectionState::CONNECTED) {
+    digitalWrite(LED_RESET, LOW);
+    logMsg(">>> Loop: Network not connected"); 
+    return;
+  }
+  else {
+    digitalWrite(LED_RESET, HIGH); //Network OK
+  }
+
+  timeClient.update();
+
+  if (!mqttClient.connected()) {
+    logMsg(">>> Loop: MQTT not connected"); 
+
+    digitalWrite(LED_USER, LOW);
+    digitalWrite(LED_D0, HIGH);
+
+    logMsg(">>> Loop: Removing SSL session"); 
+    //wifiSSLClient.removeSession(nullptr);
+
+    //SSLClient wifiSSLClient(conMan.getClient(), TAs, (size_t)TAs_NUM, A5);
+    //mqttClient.begin(broker, port, wifiSSLClient);
+
+    digitalWrite(LED_D1, HIGH);
+
+    logMsg(">>> Loop: Trying to connect MQTT");
+    //mqttClient.begin(broker, port, wifiSSLClient);
+    //
+    connectMQTT();
+    digitalWrite(LED_D3, HIGH);
+    return;
+  }
+  else {
+    digitalWrite(LED_USER, HIGH); //MQTT OK
+  }
+
+  mqttClient.loop();
+
+  updateInputs();
+    
+  if ((ms - previous_send >= send_interval )) { //heartbeat
+    digitalWrite(LED_D1, HIGH);
+    previous_send = ms;
+
+    String output = createHeartbeatMessage();
+    logMsg("Sending message: " + output);
+
+    digitalWrite(LED_D1, HIGH);
+    mqttClient.publish(topic, output);
+    digitalWrite(LED_D1, LOW);
+
+  }
+
+  delay(100);
+}
+
+void logMsg(String msg) {
+    Serial.print(timeClient.getFormattedTime());
+    Serial.print(" ");
+    Serial.println(msg);
+}
+
+void flashError(int t, int loops, int led) {
+  for (int x = 0; x < loops; x++) {
+    digitalWrite(led, HIGH);
+    delay(t);
+    digitalWrite(led, LOW);
+    delay(t);
+  }
+  delay(3000);
+  return;
+}
+
+void initInputs() {
   pinMode(PIN_A0, INPUT); // Tryckvakt
   pinMode(PIN_A1, INPUT); // Matarpump
   pinMode(PIN_A2, INPUT); // Tanksensor
@@ -65,94 +176,23 @@ void setup() {
   pinMode(PIN_A4, INPUT); // Backspolning
   pinMode(PIN_A5, INPUT); // Larm
 
-  timeClient.begin();
+  status[0] = digitalRead(PIN_A0);
+  status[1] = digitalRead(PIN_A1);
+  status[2] = digitalRead(PIN_A2);
+  status[3] = digitalRead(PIN_A3);
+  status[4] = digitalRead(PIN_A4);
+  status[5] = digitalRead(PIN_A5);
 
-  mqttClient.setUsernamePassword(SECRET_MQTT_USER, SECRET_MQTT_PASS);
-  
+  long t = timeClient.getEpochTime();
 
-  do {
-    conMan.check();
-    timeClient.update();
-  } while (conMan.getStatus() != NetworkConnectionState::CONNECTED && timeClient.isTimeSet() != true);
-
-  unsigned long t = timeClient.getEpochTime();
   for (int x = 0; x < 6; x++) {
     senaste_andring[x] = t;
   }
-  
-  
-}
 
-
-
-void loop() {
-  digitalWrite(LED_D2, HIGH);
-  delay(10);
-  digitalWrite(LED_D2, LOW);
-
-  unsigned long ms = millis();
-
-  digitalWrite(LED_D0, LOW);
-  digitalWrite(LED_D1, LOW);
-
-  if (ms - previous_wifi >= wifi_interval) {
-    conMan.check();
-    previous_wifi = ms;
-  }
-
-  timeClient.update();
-
-  updateInputs();
-
-  if (mqttClient.connected()) {
-    digitalWrite(LED_USER, HIGH);
-    
-    if (ms - previous_check >= check_interval) {
-      digitalWrite(LED_D0, HIGH);
-      previous_check = ms;
-      //mqttClient.poll();
-      checkMessages();
-    }
-
-    if ((ms - previous_send >= send_interval ) || nyinfo == 1 ) {
-      digitalWrite(LED_D1, HIGH);
-      previous_send = ms;
-
-      String output = createStatusMessage(nyinfo);
-      Serial.print(timeClient.getFormattedTime());
-      Serial.print(" ");
-      Serial.print("Sending message to topic: ");
-      Serial.print(topic);
-      Serial.print(":");
-      Serial.println(output);
-
-      mqttClient.beginMessage(topic);
-      mqttClient.print(output);
-      mqttClient.endMessage();
-    }
-    
-    firstchecks = false;
-  }
-  else {
-    digitalWrite(LED_USER, LOW);
-    if (ms - previous_mqttconn >= mqttconn_interval) {
-      digitalWrite(LED_USER, HIGH);
-      delay(300);
-      digitalWrite(LED_USER, LOW);
-      delay(300);
-      digitalWrite(LED_USER, HIGH);
-      delay(300);
-      digitalWrite(LED_USER, LOW);
-      connectMQTT();
-      previous_mqttconn = ms;
-    }
-  }
-  
-  delay(50);
 }
 
 void updateInputs() {
-  nyinfo = 0;
+  
   for (int x = 0; x < 6; x++) {
     g_status[x] = status[x];
   }
@@ -167,63 +207,59 @@ void updateInputs() {
   statustid = timeClient.getEpochTime();
 
   for (int x = 0; x < 6; x++) {
-    if (g_status[x] != status[x] || firstchecks == true) {
+    if (g_status[x] != status[x]) {
       g_statustid[x] = statustid - senaste_andring[x];
       senaste_andring[x] = statustid;
-      nyinfo = 1;
+      String msg = createStatusMessage(x);
+      sendMessage(msg);
+      delay(100);
     }
   }
 
 }
 
-String createStatusMessage(int type) {
+void sendMessage(String msg) {
+  digitalWrite(LED_D0, HIGH);
+  logMsg("Sending message: " + msg);
+
+  mqttClient.publish(topic, msg);
+  digitalWrite(LED_D0, LOW);
+}
+
+String createStatusMessage(int id) {
   const int capacity (JSON_OBJECT_SIZE(4) + (7 * JSON_OBJECT_SIZE(4)));
   StaticJsonDocument<capacity> doc;
   String output;
-  
+
   JsonObject obj = doc.createNestedObject("h");
-
+  obj["z"] = 0;
   obj["time"] = statustid;
-  obj["type"] = type;
+  obj["id"] = id;
+  obj["s"] = status[id];
+  obj["c"] = senaste_andring[id];
+  obj["t"] = g_statustid[id];
 
-  JsonObject data = doc.createNestedObject("d");
-
-  JsonObject obj1 =  data.createNestedObject("0");
-  obj1["s"] = status[0];
-  obj1["c"] = senaste_andring[0];
-  obj1["t"] = g_statustid[0];
-  
-  JsonObject obj2 = data.createNestedObject("1");
-  obj2["s"] = status[1];
-  obj2["c"] = senaste_andring[1];
-  obj2["t"] = g_statustid[1];
-
-  JsonObject obj3 = data.createNestedObject("2");
-  obj3["s"] = status[2];
-  obj3["c"] = senaste_andring[2];
-  obj3["t"] = g_statustid[2];
-
-  JsonObject obj4 = data.createNestedObject("3");
-  obj4["s"] = status[3];
-  obj4["c"] = senaste_andring[3];
-  obj4["t"] = g_statustid[3];
-  /*
-  JsonObject obj5 = data.createNestedObject("4");
-  obj5["s"] = status[4];
-  obj5["c"] = senaste_andring[4];
-  obj5["t"] = g_statustid[4];
-
-  JsonObject obj6 = data.createNestedObject("5");
-  obj6["s"] = status[5];
-  obj6["c"] = senaste_andring[5];
-  obj6["t"] = g_statustid[5];
-*/
   serializeJson(doc, output);
-
   return output;
 }
 
+String createHeartbeatMessage() {
+  const int capacity (JSON_OBJECT_SIZE(4) + (7 * JSON_OBJECT_SIZE(4)));
+  StaticJsonDocument<capacity> doc;
+  String output;
+
+  JsonObject obj = doc.createNestedObject("h");
+
+  obj["z"] = 1;
+  obj["time"] = timeClient.getEpochTime();
+
+  serializeJson(doc, output);
+  return output;
+}
+
+
 void checkMessages() {
+/*
   int messageSize = mqttClient.parseMessage();
   if (messageSize) {
     Serial.print(timeClient.getFormattedTime());
@@ -240,67 +276,45 @@ void checkMessages() {
     Serial.println();
 
   }
+  */
 }
 
 
 void onNetworkConnect() {
   digitalWrite(LED_RESET, HIGH);
-  Serial.println(">>>> CONNECTED to network");
-  timeClient.forceUpdate();
-  connectMQTT();
+  logMsg(">>>> CONNECTED to network");
+  flashError(200, 3, LED_RESET);
+  timeClient.forceUpdate();  
 }
 
 void onNetworkDisconnect() {
   digitalWrite(LED_RESET, LOW);
-  Serial.println(">>>> DISCONNECTED from network");
+  logMsg(">>>> DISCONNECTED from network");
 }
 
 void onNetworkError() {
   digitalWrite(LED_RESET, LOW);
-  Serial.println(">>>> ERROR");
+  logMsg(">>>> ERROR");
+  flashError(500, 8, LED_RESET);
 }
 
-void connectMQTT() {
-  if (conMan.getStatus() != NetworkConnectionState::CONNECTED) { 
-    return; 
-  }
+bool connectMQTT() {
+  logMsg("Attempting to connect to the MQTT broker");
   
-  Serial.print("Attempting to connect to the MQTT broker: ");
-  Serial.println(broker);
+  digitalWrite(LED_D2, HIGH);
 
-  if (!mqttClient.connect(broker, port)) {
-      digitalWrite(LED_USER, HIGH);
-      delay(100);
-      digitalWrite(LED_USER, LOW);
-      delay(100);
-      digitalWrite(LED_USER, HIGH);
-      delay(100);
-      digitalWrite(LED_USER, LOW);
-      delay(100);
-      digitalWrite(LED_USER, HIGH);
-      delay(100);
-      digitalWrite(LED_USER, LOW);
-      delay(100);
-      digitalWrite(LED_USER, HIGH);
-      delay(100);
-      digitalWrite(LED_USER, LOW);
-
-    Serial.print("MQTT connection failed! Error code = ");
-    Serial.println(mqttClient.connectError());
-    return;
+  if (!mqttClient.connect(clientname, SECRET_MQTT_USER, SECRET_MQTT_PASS)) {
+    digitalWrite(LED_D3, HIGH);
+    logMsg("MQTT not connected!");
+    flashError(1000, 6, LED_USER);
+    delay(5000);
+    return false;
   }
 
-  Serial.println("We are connected to the MQTT broker!");
-  Serial.println();
+  digitalWrite(LED_USER, HIGH) ;
+  logMsg("We are connected to the MQTT broker!");
 
-  Serial.print("Subscribing to topic: ");
-  Serial.println(configtopic);
-  Serial.println();
+  flashError(200, 3, LED_USER);
 
-  mqttClient.subscribe(configtopic);
-
-
-  Serial.print("Waiting for messages on topic: ");
-  Serial.println(configtopic);
-  Serial.println();
+  return true;
 }
