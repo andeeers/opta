@@ -1,55 +1,33 @@
-
-#include <SPI.h>
 #include <WiFi.h>
+#include <WiFiSSLClient.h>
 #include <NTPClient.h>
 #include <WiFiUdp.h>
-#include <SSLClient.h>
-//#include <ArduinoMqttClient.h>
 #include <MQTT.h>
-#include <Arduino_ConnectionHandler.h>
 #include <ArduinoJson.h>
-#include "trust_anchors.h"
 #include "secrets.h"
 
-const char broker[] = SECRET_MQTT_BROKER;
-const char clientname[] = "anders1";
-int        port     = 8883;
 const char topic[]  = "anders/hej";
-const char configtopic[]  = "anders/config";
 
-const long send_interval = 60000;
+const long send_interval = 10000;
 unsigned long previous_send = 0;
 
-const long check_interval = 1000;
-unsigned long previous_check = 0;
-
-const long wifi_interval = 10000;
-unsigned long previous_wifi = 0;
-
-const long mqttconn_interval = 10000;
-unsigned long previous_mqttconn = 0;
-
-bool status[6] = {0, 0, 0, 0, 0, 0};
-bool g_status[6] = {0, 0, 0, 0, 0, 0};
-unsigned long senaste_andring[6] = {0, 0, 0, 0, 0, 0};
-unsigned long g_statustid[6] = {0, 0, 0, 0, 0, 0};
+bool status[7] = {0, 0, 0, 0, 0, 0, 0};
+bool g_status[7] = {0, 0, 0, 0, 0, 0, 0};
+unsigned long senaste_andring[7] = {0, 0, 0, 0, 0, 0, 0};
+unsigned long g_statustid[7] = {0, 0, 0, 0, 0, 0, 0};
 unsigned long statustid = 0;
 
-WiFiConnectionHandler conMan(SECRET_SSID, SECRET_WEPKEY);
-
-SSLClient wifiSSLClient(conMan.getClient(), TAs, (size_t)TAs_NUM, A5);
-
-
+WiFiSSLClient client;
+WiFiUDP ntpUDP;
 MQTTClient mqttClient;
-
-NTPClient timeClient(conMan.getUDP());
+NTPClient timeClient(ntpUDP);
 
 void setup() {
   Serial.begin(9600);
   delay(2000);
-
+  
   Serial.println("Hello world");
-
+  client.appendCustomCACert(SECRET_CACERT);
   pinMode(LED_D0, OUTPUT);
   pinMode(LED_D1, OUTPUT);
   pinMode(LED_D2, OUTPUT); // main loop
@@ -57,20 +35,17 @@ void setup() {
   pinMode(LED_USER, OUTPUT); // mqtt
   pinMode(LED_RESET, OUTPUT); // wifi
 
-  //wifiSSLClient.setTimeout(5);
-
-  mqttClient.begin(broker, port, wifiSSLClient);
+  WiFi.begin(SECRET_SSID, SECRET_WEPKEY);
+  mqttClient.begin(SECRET_MQTT_BROKER, SECRET_MQTT_PORT, client);
   
-  conMan.addCallback(NetworkConnectionEvent::CONNECTED, onNetworkConnect);
-  conMan.addCallback(NetworkConnectionEvent::DISCONNECTED, onNetworkDisconnect);
-  conMan.addCallback(NetworkConnectionEvent::ERROR, onNetworkError);
-
   timeClient.begin();
     
   do {
-    conMan.check();
+    digitalWrite(LED_RESET, HIGH);
     timeClient.update();
-  } while (conMan.getStatus() != NetworkConnectionState::CONNECTED && timeClient.isTimeSet() != true);
+    delay(200);
+    digitalWrite(LED_RESET, LOW);
+  } while (WiFi.status() != WL_CONNECTED && timeClient.isTimeSet() != true);
 
   initInputs();
   
@@ -89,15 +64,15 @@ void loop() {
 
   unsigned long ms = millis();
 
-  if (ms - previous_wifi >= wifi_interval) {
-    logMsg(">>> Loop: Checking conMan"); 
-    conMan.check();
-    previous_wifi = ms;
-  }
-
-  if (conMan.getStatus() != NetworkConnectionState::CONNECTED) {
+  if (WiFi.status() != WL_CONNECTED) {
+    digitalWrite(LED_USER, LOW); //mqtt can not be connected
+    
+    logMsg(">>> Loop: Network not connected. Trying to reconnect."); 
+    digitalWrite(LED_RESET, HIGH);
+    WiFi.begin(SECRET_SSID, SECRET_WEPKEY);
+    delay(500);
     digitalWrite(LED_RESET, LOW);
-    logMsg(">>> Loop: Network not connected"); 
+    delay(3000);
     return;
   }
   else {
@@ -112,17 +87,8 @@ void loop() {
     digitalWrite(LED_USER, LOW);
     digitalWrite(LED_D0, HIGH);
 
-    logMsg(">>> Loop: Removing SSL session"); 
-    //wifiSSLClient.removeSession(nullptr);
-
-    //SSLClient wifiSSLClient(conMan.getClient(), TAs, (size_t)TAs_NUM, A5);
-    //mqttClient.begin(broker, port, wifiSSLClient);
-
-    digitalWrite(LED_D1, HIGH);
-
     logMsg(">>> Loop: Trying to connect MQTT");
-    //mqttClient.begin(broker, port, wifiSSLClient);
-    //
+
     connectMQTT();
     digitalWrite(LED_D3, HIGH);
     return;
@@ -169,23 +135,25 @@ void flashError(int t, int loops, int led) {
 }
 
 void initInputs() {
-  pinMode(PIN_A0, INPUT); // Tryckvakt
-  pinMode(PIN_A1, INPUT); // Matarpump
-  pinMode(PIN_A2, INPUT); // Tanksensor
-  pinMode(PIN_A3, INPUT); // Högtryckspump
-  pinMode(PIN_A4, INPUT); // Backspolning
-  pinMode(PIN_A5, INPUT); // Larm
+  pinMode(PIN_A0, INPUT); // Högtryckspump
+  pinMode(PIN_A1, INPUT); // Tryckvakt
+  pinMode(PIN_A2, INPUT); // Larm
+  pinMode(PIN_A3, INPUT); // Matarpump
+  pinMode(PIN_A4, INPUT); // Tanksensor
+  pinMode(PIN_A5, INPUT); // Renspolning
+  pinMode(PIN_A6, INPUT); // ?
 
   status[0] = digitalRead(PIN_A0);
-  status[1] = digitalRead(PIN_A1);
-  status[2] = digitalRead(PIN_A2);
+  status[1] = true; // Få notis om den är false vid första avläsning
+  status[2] = false; // FÅ noties om den är true vid första avläsning
   status[3] = digitalRead(PIN_A3);
   status[4] = digitalRead(PIN_A4);
   status[5] = digitalRead(PIN_A5);
+  status[6] = digitalRead(PIN_A6);
 
   long t = timeClient.getEpochTime();
 
-  for (int x = 0; x < 6; x++) {
+  for (int x = 0; x < 7; x++) {
     senaste_andring[x] = t;
   }
 
@@ -193,7 +161,7 @@ void initInputs() {
 
 void updateInputs() {
   
-  for (int x = 0; x < 6; x++) {
+  for (int x = 0; x < 7; x++) {
     g_status[x] = status[x];
   }
 
@@ -203,10 +171,11 @@ void updateInputs() {
   status[3] = digitalRead(PIN_A3);
   status[4] = digitalRead(PIN_A4);
   status[5] = digitalRead(PIN_A5);
+  status[6] = digitalRead(PIN_A6);
   
   statustid = timeClient.getEpochTime();
 
-  for (int x = 0; x < 6; x++) {
+  for (int x = 0; x < 7; x++) {
     if (g_status[x] != status[x]) {
       g_statustid[x] = statustid - senaste_andring[x];
       senaste_andring[x] = statustid;
@@ -280,30 +249,13 @@ void checkMessages() {
 }
 
 
-void onNetworkConnect() {
-  digitalWrite(LED_RESET, HIGH);
-  logMsg(">>>> CONNECTED to network");
-  flashError(200, 3, LED_RESET);
-  timeClient.forceUpdate();  
-}
-
-void onNetworkDisconnect() {
-  digitalWrite(LED_RESET, LOW);
-  logMsg(">>>> DISCONNECTED from network");
-}
-
-void onNetworkError() {
-  digitalWrite(LED_RESET, LOW);
-  logMsg(">>>> ERROR");
-  flashError(500, 8, LED_RESET);
-}
-
 bool connectMQTT() {
+  logMsg("Stopping WiFi Client");
+  client.stop();
   logMsg("Attempting to connect to the MQTT broker");
-  
   digitalWrite(LED_D2, HIGH);
 
-  if (!mqttClient.connect(clientname, SECRET_MQTT_USER, SECRET_MQTT_PASS)) {
+  if (!mqttClient.connect(SECRET_CLIENTNAME, SECRET_MQTT_USER, SECRET_MQTT_PASS)) {
     digitalWrite(LED_D3, HIGH);
     logMsg("MQTT not connected!");
     flashError(1000, 6, LED_USER);
