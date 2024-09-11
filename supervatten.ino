@@ -42,9 +42,11 @@ void setup() {
     
   do {
     digitalWrite(LED_RESET, HIGH);
-    timeClient.update();
-    delay(200);
+    WiFi.begin(SECRET_SSID, SECRET_WEPKEY);
+    delay(500);
     digitalWrite(LED_RESET, LOW);
+    timeClient.update();
+    delay(500);
   } while (WiFi.status() != WL_CONNECTED && timeClient.isTimeSet() != true);
 
   initInputs();
